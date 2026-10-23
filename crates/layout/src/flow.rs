@@ -172,6 +172,9 @@ struct Flow<'a> {
     wrap_relays: usize,
     /// The first line not placed yet.
     l0: usize,
+    /// A paragraph kept with the next one split as in Word for Mac (`keep_together`): how many
+    /// of its lines stay on this page, its last lines going over with the next one.
+    keep_cap: Option<usize>,
 }
 
 impl<'a> Flow<'a> {
@@ -206,6 +209,7 @@ impl<'a> Flow<'a> {
             page_relays: 0,
             wrap_relays: 0,
             l0: 0,
+            keep_cap: None,
         }
     }
 
@@ -301,9 +305,12 @@ impl<'a> Flow<'a> {
 
     /// Keep lines together: if it doesn't fit but would on an empty column, move it. Keep with
     /// next alone moves a paragraph only when it would fit here by itself (Word for Windows): one
-    /// that doesn't breaks as usual, its last lines going over with the next paragraph. Returns
-    /// the space before applied (`before`, or what is left of it at the top of the next column).
-    fn keep_together(&self, ctx: &mut Ctx, pb: &mut PageBuilder, rooms: Rooms, before: f32) -> f32 {
+    /// that doesn't breaks as usual, its last lines going over with the next paragraph. Word for
+    /// Mac splits one that fits too, when it can be split: its last lines (two with widow
+    /// control) go over with the next paragraph, and the rest stays (observed in Word for Mac
+    /// 16.114, #3850; `keep_cap`). Returns the space before applied (`before`, or what is left of
+    /// it at the top of the next column).
+    fn keep_together(&mut self, ctx: &mut Ctx, pb: &mut PageBuilder, rooms: Rooms, before: f32) -> f32 {
         let rp = &self.pl.rp;
         let height = self.pl.height + rooms.top + rooms.bottom;
         if !(rp.keep_lines || (rp.keep_next && pb.y + height <= pb.bottom + 0.01)) {
@@ -313,6 +320,12 @@ impl<'a> Flow<'a> {
         // (Against the whole column: balanced columns grow to hold it.)
         // With the 0.01 pt of slack the other fit checks take.
         if pb.y + need > pb.bottom + 0.01 && !pb.fresh() && need <= pb.next_room(self.body_top) {
+            let carry = if rp.widow_control { 2 } else { 1 };
+            let n = self.pl.lines.len();
+            if KEEP_NEXT_SPLITS && !rp.keep_lines && n >= 2 * carry {
+                self.keep_cap = Some(n - carry);
+                return before;
+            }
             pb.advance(self.block, self.body_top);
             pb.y += rp.space_before.min(0.0);
             return rp.space_before.min(0.0);
@@ -380,6 +393,10 @@ impl<'a> Flow<'a> {
         // Worked out only for a last line on a page with notes.
         let mut after_on_page: Option<f32> = None;
         while let Some(l) = pl.lines.get(fit.l1) {
+            // A kept paragraph split so its last lines go over with the next one.
+            if l0 == 0 && self.keep_cap.is_some_and(|cap| fit.l1 >= cap) {
+                break;
+            }
             let line_notes = notes_on_line(ctx, pb, l, notes, &fit.notes);
             let limit = notes_limit(pb, &fit.notes, &line_notes);
             let free = pb.notes.is_empty() && fit.notes.is_empty() && line_notes.is_empty();
@@ -869,9 +886,14 @@ fn space_after_kept(ctx: &Ctx, block: usize, rp: &wordcraft_doc::resolve::Resolv
     after
 }
 
+/// Word for Mac splits a paragraph kept with the next one that would fit on the page, when the
+/// next can't start there, rather than moving it whole as Word for Windows does (`place_para`).
+pub(crate) const KEEP_NEXT_SPLITS: bool = cfg!(target_os = "macos");
+
 /// The room the paragraphs after `block` need on the page for keep with next: enough of the
 /// next one to start there — its first line, two of its lines with widow/orphan control (it
-/// doesn't leave a single line at the bottom of a page; it moves over whole instead), or all
+/// doesn't leave a single line at the bottom of a page; it moves over whole instead; all three of
+/// a three-line one), or all
 /// of it under keep lines together — or all of it and what it keeps with in turn when it is
 /// kept with the next too (a chain moves together in Word). Word carries a kept heading over
 /// when the paragraph after it cannot start on the page (#966).
@@ -925,7 +947,9 @@ fn next_first_line(ctx: &mut Ctx, block: usize, width: f32, depth: usize, counte
                     + if pl.rp.keep_lines {
                         pl.height
                     } else if pl.rp.widow_control && pl.lines.len() >= 2 {
-                        to(1)
+                        // Two lines, or all of a three-line one: neither of its splits (two and a
+                        // widow, an orphan and two) is allowed, so it starts here only whole.
+                        to(if pl.lines.len() == 3 { 2 } else { 1 })
                     } else {
                         to(0)
                     }
