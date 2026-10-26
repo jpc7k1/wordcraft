@@ -1,4 +1,4 @@
-use super::{Align, Arc, InlineObject, OBJ, REPORTED, Rgb, RubyAlign, VAlign, ruby_raise};
+use super::{Align, Arc, InlineObject, NumFormat, OBJ, REPORTED, Rgb, RubyAlign, VAlign, ruby_raise};
 
 /// Font used for code spans and code blocks.
 pub const MONO_FONT: &str = "Courier New";
@@ -226,6 +226,12 @@ pub struct Spacing {
 pub struct Para {
     pub kind: Kind,
     pub list: Option<ListInfo>,
+    /// The number format of an ordered list item that a document's numbering gives it (letters,
+    /// roman numerals…): HTML writes it as the list's `type`, so a paste keeps "a." or "i.".
+    pub list_format: Option<NumFormat>,
+    /// For an ordered list item, the start and number format of each level above it, for a list
+    /// that opens straight at a deeper level (a copy that starts under an item it leaves out).
+    pub list_outer: Vec<(u32, Option<NumFormat>)>,
     pub align: Option<Align>,
     pub page_break: bool,
     /// Keep the paragraph on the same page as the next one (ODT `fo:keep-with-next`).

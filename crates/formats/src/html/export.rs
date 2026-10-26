@@ -1,4 +1,4 @@
-use super::{Align, Document, FBlock, FTable, Flow, Fmt, Inline, Kind, Para, VAlign, base64_encode, mime_of, model};
+use super::{Align, Document, FBlock, FTable, Flow, Fmt, Inline, Kind, NumFormat, Para, VAlign, base64_encode, mime_of, model};
 
 // ---------------------------------------------------------------------------------------------
 // Export
@@ -253,7 +253,19 @@ fn blocks_html(blocks: &[FBlock], out: &mut String, depth: usize) {
                             out.push_str("<li>");
                             top.1 = true;
                         }
-                        out.push_str(if li.ordered { "<ol>" } else { "<ul>" });
+                        // The innermost list opens with the item's number format and start, as
+                        // a browser and Word read them (`<ol type="a" start="3">`).
+                        let innermost = stack.len() == lv;
+                        // A list opening above it (the copy leaves its item out) takes that
+                        // level's start and format.
+                        out.push_str(&match (li.ordered, innermost) {
+                            (true, true) => format!("<ol{}>", ol_attrs(li.start, q.list_format)),
+                            (true, false) => match q.list_outer.get(stack.len()) {
+                                Some((start, fmt)) => format!("<ol{}>", ol_attrs(*start, *fmt)),
+                                None => "<ol>".to_string(),
+                            },
+                            (false, _) => "<ul>".to_string(),
+                        });
                         stack.push((li.ordered, false));
                     }
                     if let Some(top) = stack.last_mut() {
@@ -307,6 +319,23 @@ fn blocks_html(blocks: &[FBlock], out: &mut String, depth: usize) {
             }
         }
     }
+}
+
+/// An ordered list's `type` (letters and roman numerals; decimal is the default) and `start`
+/// (when not 1).
+fn ol_attrs(start: u32, format: Option<NumFormat>) -> String {
+    let ty = match format {
+        Some(NumFormat::LowerLetter) => Some("a"),
+        Some(NumFormat::UpperLetter) => Some("A"),
+        Some(NumFormat::LowerRoman) => Some("i"),
+        Some(NumFormat::UpperRoman) => Some("I"),
+        _ => None,
+    };
+    let mut a = ty.map(|t| format!(" type=\"{t}\"")).unwrap_or_default();
+    if start != 1 {
+        a.push_str(&format!(" start=\"{start}\""));
+    }
+    a
 }
 
 fn close_list(stack: &mut Vec<(bool, bool)>, out: &mut String) {

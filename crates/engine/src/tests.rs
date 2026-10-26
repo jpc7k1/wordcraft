@@ -1328,6 +1328,40 @@ fn copying_bold_text_puts_html_on_the_clipboard() {
     assert_eq!(s.clipboard_html, html);
 }
 
+/// Copied numbered paragraphs reach other programs as an HTML list (Word turns it back into
+/// numbering when it pastes; it pasted them unnumbered): with the levels' number formats, and
+/// starting at the numbers the copied items have, the levels above a copy that starts inside a
+/// sub-list included, as Word's own copy does.
+#[test]
+fn copying_numbered_paragraphs_puts_an_html_list_on_the_clipboard() {
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "One\nTwo\nSub A\nSub B\nThree"}));
+    run(&mut s, "select.all", json!({}));
+    run(&mut s, "para.numbering", json!({}));
+    for k in [2, 3] {
+        s.sel = crate::Selection::caret(Pos::body(k, 0));
+        run(&mut s, "para.listLevel", json!({"level": 1}));
+    }
+    let copied = |s: &mut Session, from: usize| {
+        s.sel = crate::Selection { anchor: Pos::body(from, 0), focus: Pos::body(4, 5) };
+        let r = run(s, "edit.copy", json!({}));
+        r["html"].as_str().unwrap_or_default().replace('\n', "")
+    };
+    let num = s.doc.para(StoryRef::Body, &wordcraft_doc::Path::top(0)).unwrap().props.numbering.unwrap().num;
+    let sub = match s.doc.numbering.level(num, 1).map(|l| l.format) {
+        Some(wordcraft_doc::section::NumFormat::LowerLetter) => " type=\"a\"",
+        Some(wordcraft_doc::section::NumFormat::LowerRoman) => " type=\"i\"",
+        _ => "",
+    };
+    let all = copied(&mut s, 0);
+    assert!(all.contains(&format!("<ol><li>One</li><li>Two<ol{sub}><li>Sub A</li><li>Sub B</li></ol></li><li>Three</li></ol>")), "{all}");
+    let from_two = copied(&mut s, 1);
+    assert!(from_two.contains(&format!("<ol start=\"2\"><li>Two<ol{sub}><li>Sub A</li>")), "{from_two}");
+    // From the second sub-item: under item 2, starting at its second number, then item 3.
+    let from_sub_b = copied(&mut s, 3);
+    assert!(from_sub_b.contains(&format!("<ol start=\"2\"><li><ol{sub} start=\"2\"><li>Sub B</li></ol></li><li>Three</li></ol>")), "{from_sub_b}");
+}
+
 #[test]
 fn copying_symbol_font_text_puts_the_unicode_symbols_on_the_clipboard() {
     let mut s = s();

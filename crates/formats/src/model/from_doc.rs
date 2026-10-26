@@ -107,7 +107,9 @@ fn props_kind(doc: &Document, props: &ParaProps, blank: bool) -> (Kind, Option<L
     };
     let list = rp.numbering.and_then(|n| {
         let lv = doc.numbering.level(n.num, n.level)?;
-        Some(ListInfo { ordered: !matches!(lv.format, NumFormat::Bullet | NumFormat::None), level: n.level.min(8), start: lv.start })
+        // A list's own start override for the level wins over its definition's start.
+        let start = doc.numbering.num(n.num).and_then(|x| x.start_overrides.iter().find(|(l, _)| *l == n.level)).map_or(lv.start, |(_, s)| *s);
+        Some(ListInfo { ordered: !matches!(lv.format, NumFormat::Bullet | NumFormat::None), level: n.level.min(8), start })
     });
     (kind, list)
 }
@@ -135,9 +137,22 @@ fn flow_paras_in(doc: &Document, p: &Paragraph, tracked: bool) -> Vec<Para> {
     let (kind, list) = para_kind(doc, p);
     let mut done: Vec<Para> = Vec::new();
     let borders = if kind == Kind::Rule { None } else { p.props.borders.filter(|b| b.any_visible()) };
+    let numbered = list.filter(|l| l.ordered).and_then(|_| doc.styles.resolve_para(&p.props).numbering);
+    let list_format = numbered.and_then(|n| doc.numbering.level(n.num, n.level).map(|lv| lv.format));
+    let list_outer = numbered.map_or_else(Vec::new, |n| {
+        (0..n.level.min(8))
+            .map(|k| {
+                let lv = doc.numbering.level(n.num, k);
+                let own = doc.numbering.num(n.num).and_then(|x| x.start_overrides.iter().find(|(l, _)| *l == k)).map(|(_, s)| *s);
+                (own.or(lv.map(|l| l.start)).unwrap_or(1), lv.map(|l| l.format))
+            })
+            .collect()
+    });
     let mut out = Para {
         kind,
         list,
+        list_format,
+        list_outer,
         align: p.props.align,
         page_break: p.props.page_break_before.unwrap_or(false),
         keep_next: p.props.keep_next.unwrap_or(false),
@@ -169,6 +184,8 @@ fn flow_paras_in(doc: &Document, p: &Paragraph, tracked: bool) -> Vec<Para> {
                     let next = Para {
                         kind,
                         list: None,
+                        list_format: None,
+                        list_outer: Vec::new(),
                         align: p.props.align,
                         page_break: true,
                         keep_next: p.props.keep_next.unwrap_or(false),
