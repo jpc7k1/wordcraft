@@ -307,6 +307,18 @@ impl WordApp {
         self.window_count() > 1 && !self.quit_requested
     }
 
+    /// File › Close from its key (⌘W). On macOS it closes the window, as Word for Mac does; in the
+    /// last window, with no menu bar for the app to stay behind in, that quits, asking first about
+    /// unsaved changes as the window's close button does. Elsewhere, and for the Backstage's Close
+    /// and an agent's `file.close`, the last window stays with no page (#1712).
+    pub(crate) fn close_from_key(&mut self) {
+        if cfg!(target_os = "macos") && self.window_count() <= 1 {
+            self.quit();
+        } else if let Err(e) = self.run("file.close", json!({})) {
+            log::warn!("closing: {e}");
+        }
+    }
+
     /// Quit the app (the app menu's Quit): ask about every document with unsaved work, each in
     /// its window, as [`WordApp::close_requested`] does. True when the app may quit now; the
     /// host closes it once `quit_requested` is set.

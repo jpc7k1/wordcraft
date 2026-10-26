@@ -281,6 +281,28 @@ fn quitting_from_the_empty_window_asks_about_the_other_windows() {
     assert!(a.quit_requested);
 }
 
+/// Mod+W in the last window: on macOS it closes the window, as Word for Mac does, and so quits
+/// once the unsaved changes are answered; elsewhere the window stays with no page (#1712).
+#[test]
+fn mod_w_in_the_last_window_closes_it_on_macos() {
+    let ctx = backend();
+    let mut a = app("Only");
+    focus(ViewportId::ROOT);
+    frames(&ctx, &mut a, 4);
+    let mac = cfg!(target_os = "macos");
+    let modifiers = egui::Modifiers { ctrl: !mac, mac_cmd: mac, command: true, ..Default::default() };
+    let key = egui::Event::Key { key: egui::Key::W, physical_key: None, pressed: true, repeat: false, modifiers };
+    EVENTS.with(|e| e.borrow_mut().entry(ViewportId::ROOT).or_default().push(key));
+    frame(&ctx, &mut a);
+    assert_eq!(prompt(&a), Some("saveChanges"), "unsaved changes are asked about first");
+    assert!(!a.quit_requested);
+    a.run("ui.saveChanges", json!({"answer": "dontSave"})).unwrap();
+    assert_eq!(a.quit_requested, mac, "the last window closes on macOS only");
+    if !mac {
+        assert!(!a.has_document(), "elsewhere the window stays with no page");
+    }
+}
+
 /// Mod+W in a window with no changes closes it; the keys typed after it in the same frame
 /// don't reach the window that comes forward.
 #[test]

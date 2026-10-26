@@ -551,6 +551,13 @@ impl WordApp {
                 json!({"pending": "contextMenu"})
             }
             "ui.paneDock" => return Some(panes::dock_command(self, p)),
+            // ⌘M on macOS: the window goes to the Dock.
+            "ui.minimize" => {
+                if let Some(ctx) = &self.ctx {
+                    ctx.send_viewport_cmd_to(self.active_viewport(), egui::ViewportCommand::Minimized(true));
+                }
+                json!({"minimized": true})
+            }
             "ui.collapseRibbon" => {
                 self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed;
                 json!({"collapsed": self.ui.ribbon_collapsed})
@@ -1004,6 +1011,7 @@ pub(crate) fn works_without_document(id: &str) -> bool {
             | "ui.dialog"
             | "ui.closeDialog"
             | "ui.collapseRibbon"
+            | "ui.minimize"
             | "ui.quickAccessToolbar"
             | "ui.keytips"
             | "ui.dark"
