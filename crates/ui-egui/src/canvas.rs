@@ -58,7 +58,7 @@ pub use navigation::{nearest_page, page_at, page_to_screen};
 use navigation::{scrollbar_page_tip, viewed_page};
 #[cfg(test)]
 use pages::{DRAWING_GRID_MAX_LINES, DRAWING_GRID_MIN_PX};
-pub(crate) use pages::{PageKeys, page_doc, page_screen_scale, preview_sel, screen_render_options};
+pub(crate) use pages::{PageKeys, keep_thumbnails, page_doc, page_screen_scale, page_thumbnail, preview_sel, screen_render_options};
 use pages::{
     drawing_grid, drawing_grid_step, gridline_cells, page_image, page_key, page_render_options, shown_layout, texel_aligned_rect, view_key,
     visible_tiles,
@@ -90,6 +90,8 @@ const TEXTURE_KEEP_SCREENS: f32 = 3.0;
 
 pub struct CanvasState {
     textures: HashMap<usize, (u64, TextureHandle)>,
+    /// The Navigation pane's page thumbnails, by page ([`page_thumbnail`]).
+    thumbnails: HashMap<usize, (u64, TextureHandle)>,
     /// Visible full-resolution tiles of pages too tall for one GPU texture.
     tiles: HashMap<(usize, usize), (u64, TextureHandle)>,
     /// Page content fingerprints of the current layout, for the texture cache (#811).
@@ -326,6 +328,14 @@ impl CanvasState {
         crate::objects::dragged_off_page(self.obj_drag.as_ref())
     }
 
+    /// The pages the Navigation pane has a thumbnail of.
+    #[cfg(test)]
+    pub(crate) fn thumbnail_pages(&self) -> Vec<usize> {
+        let mut pages: Vec<usize> = self.thumbnails.keys().copied().collect();
+        pages.sort_unstable();
+        pages
+    }
+
     /// How many pages have a cached rendering.
     #[cfg(test)]
     pub(crate) fn texture_count(&self) -> usize {
@@ -339,6 +349,7 @@ impl Default for CanvasState {
     fn default() -> Self {
         CanvasState {
             textures: HashMap::new(),
+            thumbnails: HashMap::new(),
             tiles: HashMap::new(),
             page_keys: PageKeys::default(),
             markup_facts: std::cell::Cell::new(None),
