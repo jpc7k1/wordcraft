@@ -102,7 +102,9 @@ pub(crate) fn page_thumbnail(
     budget: &mut usize,
 ) -> Option<TextureHandle> {
     let page = layout.pages.get(i)?;
-    let scale_px = thumbnail_scale(width * ctx.pixels_per_point(), page.w, page.h);
+    // Thumbnails aren't tiled as the page is: one texture holds the whole page.
+    let max_side = ctx.input(|i| i.max_texture_side).min(wordcraft_render::MAX_SIDE as usize).max(1) as f32;
+    let scale_px = thumbnail_scale(width * ctx.pixels_per_point(), page.w, page.h, max_side);
     let view = view_key(app, false, None);
     let key = page_key(app, layout, i, view, scale_px);
     let fresh = app.canvas.thumbnails.get(&i).is_some_and(|(k, _)| *k == key);
@@ -126,10 +128,11 @@ pub(crate) fn page_thumbnail(
 
 /// The raster scale of a thumbnail `width_px` pixels wide of a `page_w` × `page_h` point page,
 /// at most one pixel a point. A very tall Web or Draft page is drawn smaller still, so the whole
-/// page fits within [`wordcraft_render::MAX_SIDE`] (the renderer would cut it off there).
-pub(super) fn thumbnail_scale(width_px: f32, page_w: f32, page_h: f32) -> f32 {
+/// page fits within `max_side` pixels: the backend's largest texture, at most
+/// [`wordcraft_render::MAX_SIDE`] (the renderer would cut it off there).
+pub(super) fn thumbnail_scale(width_px: f32, page_w: f32, page_h: f32, max_side: f32) -> f32 {
     // A pixel short of the largest side: the renderer rounds the raster's sides up.
-    let side = wordcraft_render::MAX_SIDE as f32 - 1.0;
+    let side = (max_side - 1.0).max(1.0);
     let (w, h) = (page_w.max(1.0), page_h.clamp(1.0, 1e6));
     let scale = (width_px / w).clamp(0.02, 1.0);
     if scale.is_finite() { scale.min(side / w).min(side / h) } else { 0.02 }
