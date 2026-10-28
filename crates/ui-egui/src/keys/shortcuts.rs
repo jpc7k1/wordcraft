@@ -245,9 +245,12 @@ pub(super) fn is_global_shortcut(key: Key, m: Modifiers) -> bool {
 }
 
 /// Whether a text field keeps a Mod key for itself: Select All, Copy, Cut, Paste, Undo and Redo,
-/// egui's Ctrl+H/K/U/W line editing, and moving or deleting by word or line.
+/// egui's Ctrl+H/K/U/W line editing, and moving or deleting by word or line. Copy, Cut and Paste
+/// are Mod+C/X/V without Shift (egui-winit's `command_only`), so Mod+Shift+C and Mod+Shift+V run
+/// Copy and Paste Formatting from the field; egui's Select All, Undo and Redo also take Shift.
 pub(super) fn text_field_keeps(key: Key, m: Modifiers) -> bool {
-    matches!(key, Key::A | Key::C | Key::V | Key::X | Key::Y | Key::Z)
+    matches!(key, Key::A | Key::Y | Key::Z)
+        || (!m.shift && matches!(key, Key::C | Key::V | Key::X))
         || (m.ctrl && matches!(key, Key::H | Key::K | Key::U | Key::W))
         || matches!(
             key,
