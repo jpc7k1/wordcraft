@@ -209,10 +209,16 @@ fn update_lists(s: &mut Session, toa_only: bool) -> Result<bool, CmdError> {
         } else {
             ENTRY_STYLE
         };
-        let is_entry = |b: Option<&Block>| {
-            b.and_then(|b| b.as_para())
-                .is_some_and(|p| p.props.style.as_deref().is_some_and(|st| st == ENTRY_STYLE || (toa && st == TOA_ENTRY_STYLE)))
-        };
+        // A table of authorities' entries are in the Table of Authorities style only, so a list
+        // in WordCraft's List Entry style right after the table is not taken as its entries. The
+        // one exception is a table WordCraft made before it used Word's style: its field is a bare
+        // `TOA` (Word and Insert Table of Authorities always write `\c`) and its entries are in
+        // List Entry. Those are replaced once, in Word's style, and then go by that style.
+        let legacy_toa = toa
+            && FieldCode::parse(&kind).arg('c').is_none()
+            && s.doc.body.get(i + 1).and_then(|b| b.as_para()).is_some_and(|p| p.props.style.as_deref() == Some(ENTRY_STYLE));
+        let old_style = if toa && !legacy_toa { TOA_ENTRY_STYLE } else { ENTRY_STYLE };
+        let is_entry = |b: Option<&Block>| b.and_then(|b| b.as_para()).is_some_and(|p| p.props.style.as_deref() == Some(old_style));
         let leader = Some(s.doc.body.get(i + 1).map(|b| &**b))
             .filter(|b| is_entry(*b))
             .flatten()

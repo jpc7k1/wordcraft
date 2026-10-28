@@ -1,4 +1,4 @@
-use super::authorities::{mark_all, ta_field};
+use super::authorities::{MARK_ALL_CAP, mark_all, ta_field};
 use super::*;
 use crate::Session;
 
@@ -473,7 +473,7 @@ fn mark_all_marks_each_exact_citation_once() {
     s.run("caret.docEnd", &json!({})).unwrap();
     let at = s.sel.focus.clone();
     let again = mark_all(&mut s, "Doe v. Roe, 123 So. 3d 456 (Ala. 2020)", "Doe v. Roe", (&at, &at)).unwrap();
-    assert_eq!(again, 0);
+    assert_eq!(again, (0, false));
     for path in s.doc.para_paths(StoryRef::Body) {
         let p = s.doc.para(StoryRef::Body, &path).unwrap();
         for off in p.object_offsets() {
@@ -529,6 +529,96 @@ fn update_table_replaces_a_table_word_built() {
     assert!(!t.contains("Stale v. Entry"), "{t}");
     assert_eq!(t.matches("Able v. Baker, 111 So. 2d 222 (Ala. 1990)\t").count(), 1, "{t}");
     assert!(!t.contains("Ala. Code § 1-2-3 (1975)\t"), "Cases lists no statute: {t}");
+}
+
+/// A citation's quotes and backslashes are dropped from its mark: `\c 3` or `\s` typed in a long or
+/// short citation would otherwise be read back as switches, putting the mark in another category
+/// or cutting its citation short. A short citation left empty falls back to the long one.
+#[test]
+fn mark_citation_drops_backslashes_and_quotes_from_citations() {
+    let mut s = Session::new(wordcraft_doc::Document::from_text("Doe v. Roe held it."));
+    s.run("select.text", &json!({"text": "Doe v. Roe"})).unwrap();
+    let v = s.run("references.markCitation", &json!({"long": "Doe \\c 3 v.\u{7}\"Roe\"\\s \\l \"x\"", "short": "\\\\ \"", "category": 1})).unwrap();
+    assert_eq!(v["long"], "Doe c 3 v. Roes l x", "{v}");
+    assert_eq!(v["short"], v["long"], "{v}");
+    let (instr, _) = fields(&s).into_iter().next().unwrap();
+    assert!(!instr.trim_start_matches("TA \\l").contains("\\c 3"), "{instr}");
+    let f = FieldCode::parse(&instr);
+    assert_eq!((f.arg('l'), f.arg('s'), f.arg('c').map(str::trim)), (Some("Doe c 3 v. Roes l x"), Some("Doe c 3 v. Roes l x"), Some("1")), "{instr}");
+    // The table lists it under Cases, whole.
+    s.run("caret.docEnd", &json!({})).unwrap();
+    s.run("text.newParagraph", &json!({})).unwrap();
+    s.run("references.tableOfAuthorities", &json!({})).unwrap();
+    let t = s.doc.plain_text(StoryRef::Body);
+    assert!(t.contains("Cases\nDoe c 3 v. Roes l x\t1"), "{t}");
+    // Backslashes and quotes alone are no citation.
+    assert!(s.run("references.markCitation", &json!({"long": "\\\"\\"})).is_err());
+}
+
+/// Mark All stops at `MARK_ALL_CAP` marks, the first ones in the document, and says so; a run
+/// under the cap says it wasn't capped.
+#[test]
+fn mark_all_stops_at_its_cap() {
+    let half = "x ".repeat(600);
+    let mut s = Session::new(wordcraft_doc::Document::from_text(&format!("{half}\n{half}")));
+    s.run("select.text", &json!({"text": "x"})).unwrap();
+    let v = s.run("references.markCitation", &json!({"all": true})).unwrap();
+    assert_eq!((v["marked"].as_u64(), v["capped"].as_bool()), (Some(MARK_ALL_CAP as u64 + 1), Some(true)), "{v}");
+    let ta = |k: usize| {
+        let p = s.doc.para(StoryRef::Body, &Path::top(k)).unwrap();
+        p.objects.iter().filter(|o| matches!(o, InlineObject::Field { instr, .. } if instr.starts_with("TA "))).count()
+    };
+    // Every x of the first paragraph, then the first ones of the second.
+    assert_eq!((ta(0), ta(1)), (600, MARK_ALL_CAP + 1 - 600));
+    let second = s.doc.para(StoryRef::Body, &Path::top(1)).unwrap();
+    assert!(second.object_at(1).is_some(), "the first x of the second paragraph is marked");
+    assert!(second.text.trim_end().ends_with('x'), "the last x of the second paragraph is not");
+    // Mark All again marks the rest.
+    s.run("caret.docEnd", &json!({})).unwrap();
+    let at = s.sel.focus.clone();
+    assert_eq!(mark_all(&mut s, "x", "x", (&at, &at)).unwrap(), (1200 - MARK_ALL_CAP - 1, false));
+}
+
+/// Update Table takes only paragraphs in the Table of Authorities style as a table's entries: a
+/// list in WordCraft's List Entry style right after the table stays.
+#[test]
+fn update_table_keeps_a_list_after_a_table_of_authorities() {
+    let mut s = marked_brief();
+    s.sel = Selection::caret(Pos { story: StoryRef::Body, path: Path::top(1), off: 0 });
+    s.run("references.tableOfAuthorities", &json!({})).unwrap();
+    let last = s.doc.body.iter().rposition(|b| b.as_para().is_some_and(|p| p.props.style.as_deref() == Some("TableofAuthorities"))).unwrap();
+    let after = Paragraph::with_text("Kept v. Listed\t7", CharProps::default()).styled(ENTRY_STYLE);
+    s.doc.insert_block(StoryRef::Body, &Path::top(last + 1), Block::Para(after)).unwrap();
+    s.run("references.updateAuthorities", &json!({})).unwrap();
+    let t = s.doc.plain_text(StoryRef::Body);
+    assert_eq!(t.matches("Kept v. Listed\t7").count(), 1, "{t}");
+    assert_eq!(t.matches("Able v. Baker, 111 So. 2d 222 (Ala. 1990)\t").count(), 1, "{t}");
+}
+
+/// A table of authorities WordCraft made before it used Word's style (a bare `TOA` field, its
+/// entries in List Entry) is still replaced by Update Table, once, in Word's style.
+#[test]
+fn update_table_replaces_an_older_wordcraft_table_of_authorities() {
+    let mut s = marked_brief();
+    let mut head = Paragraph::with_text("Table of Authorities", CharProps::default()).styled("Heading1");
+    let end = head.len();
+    head.insert_object(
+        end,
+        InlineObject::Field { instr: "TOA".into(), result: String::new(), locked: false, dirty: false, code: false, form: String::new() },
+        &CharProps::default(),
+    )
+    .unwrap();
+    let stale = Paragraph::with_text("Stale v. Entry, 1 So. 1 (Ala. 1900)\t9", CharProps::default()).styled(ENTRY_STYLE);
+    s.doc.insert_block(StoryRef::Body, &Path::top(1), Block::Para(head)).unwrap();
+    s.doc.insert_block(StoryRef::Body, &Path::top(2), Block::Para(stale)).unwrap();
+    for _ in 0..2 {
+        s.run("references.updateAuthorities", &json!({})).unwrap();
+        let t = s.doc.plain_text(StoryRef::Body);
+        assert!(!t.contains("Stale v. Entry"), "{t}");
+        assert_eq!(t.matches("Able v. Baker, 111 So. 2d 222 (Ala. 1990)\t").count(), 1, "{t}");
+    }
+    let entry = s.doc.body.get(2).and_then(|b| b.as_para()).unwrap();
+    assert_eq!(entry.props.style.as_deref(), Some("TableofAuthorities"));
 }
 
 /// #661: References › Table of Authorities › Update Table picks up citations marked after the table.

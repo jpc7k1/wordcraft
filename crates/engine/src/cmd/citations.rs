@@ -66,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         CommandSpec::new("references.markCitation", "Mark Citation", "References › Table of Authorities", mark_citation)
             .params(
-                r#"{"long"?: string (the citation as the table lists it; default: the selected text), "short"?: string (default: the long citation), "category"?: 1-16 (1 Cases, 2 Statutes, 3 Other Authorities, 4 Rules, 5 Treatises, 6 Regulations, 7 Constitutional Provisions; default 1), "all"?: bool (Mark All: also every other place the long or short citation appears, exactly as typed), "entry"?: string (same as long)}"#,
+                r#"{"long"?: string (the citation as the table lists it; default: the selected text), "short"?: string (default: the long citation), "category"?: 1-16 (1 Cases, 2 Statutes, 3 Other Authorities, 4 Rules, 5 Treatises, 6 Regulations, 7 Constitutional Provisions; default 1), "all"?: bool (Mark All: also every other place the long or short citation appears, exactly as typed; at most 1000 marks, `capped` in the result says more were left), "entry"?: string (same as long)}"#,
             )
             .key(super::non_mac("Alt+Shift+I")),
         CommandSpec::new("references.tableOfAuthorities", "Insert Table of Authorities", "References › Table of Authorities", insert_authorities)

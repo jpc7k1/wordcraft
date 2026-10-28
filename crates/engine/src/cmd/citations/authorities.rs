@@ -77,12 +77,25 @@ pub(super) fn ta_field(instr: String) -> (InlineObject, CharProps) {
     (InlineObject::Field { instr, result: String::new(), locked: false, dirty: false, code: false, form: String::new() }, CharProps::default())
 }
 
-/// Mark Citation: a hidden `TA` field after the selection with the long citation, the short one
-/// and the category, as Word's Mark writes it. With `all` (Mark All) also a short-citation mark
-/// (`TA \s`) after every other place in the main text where the long or the short citation
-/// appears exactly as typed (whole words) and isn't marked yet, as Microsoft documents Mark All.
+/// The most short-citation marks one Mark All adds: a one-character citation would otherwise
+/// mark every place it appears in the document. A brief cites one authority far fewer times.
+pub(super) const MARK_ALL_CAP: usize = 1000;
+
+/// A citation as it goes in a `TA` field's quoted argument: whitespace runs as one space, and no
+/// quotes or backslashes, which would end the argument or start a switch (`\c 3`, `\s`) when the
+/// field is read again; control characters count as spaces.
+fn clean_citation(t: &str) -> String {
+    let kept: String = t.chars().filter(|c| !matches!(c, '"' | '\\')).map(|c| if c.is_control() { ' ' } else { c }).collect();
+    kept.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Mark Citation: a `TA` field after the selection with the long citation, the short one and the
+/// category, as Word's Mark writes it. With `all` (Mark All) also a short-citation mark (`TA \s`)
+/// after every other place in the main text where the long or the short citation appears exactly
+/// as typed (whole words) and isn't marked yet, as Microsoft documents Mark All, up to
+/// [`MARK_ALL_CAP`] marks (`capped` says the cap was reached).
 pub(super) fn mark_citation(s: &mut Session, v: &Value) -> CmdResult {
-    let clean = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").replace('"', "");
+    let clean = clean_citation;
     let long = clean(&p::str(v, "long").or_else(|| p::str(v, "entry")).map(str::to_string).unwrap_or_else(|| s.selected_text()));
     if long.is_empty() {
         return Err(CmdError::Params("select a citation or give `long`".into()));
@@ -93,19 +106,27 @@ pub(super) fn mark_citation(s: &mut Session, v: &Value) -> CmdResult {
     let (field, props) = ta_field(format!("TA \\l \"{long}\" \\s \"{short}\" \\c {category}"));
     s.doc.insert_object(&b, field, &props)?;
     let mut marked = 1;
+    let mut capped = false;
     if p::bool(v, "all").unwrap_or(false) {
-        marked += mark_all(s, &long, &short, (&a, &b))?;
+        let (added, full) = mark_all(s, &long, &short, (&a, &b))?;
+        marked += added;
+        capped = full;
     }
     s.clamp_selection();
     s.touch();
-    Ok(json!({"long": long, "short": short, "category": category, "marked": marked}))
+    Ok(json!({"long": long, "short": short, "category": category, "marked": marked, "capped": capped}))
 }
 
-/// Mark All's short-citation marks; how many it added. The selection (`selected`) was just marked.
-pub(super) fn mark_all(s: &mut Session, long: &str, short: &str, selected: (&Pos, &Pos)) -> Result<usize, CmdError> {
+/// Mark All's short-citation marks, in document order: how many it added, and whether it stopped
+/// at [`MARK_ALL_CAP`] with more left. The selection (`selected`) was just marked.
+pub(super) fn mark_all(s: &mut Session, long: &str, short: &str, selected: (&Pos, &Pos)) -> Result<(usize, bool), CmdError> {
     let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
     let mut added = 0;
+    let mut capped = false;
     for path in s.doc.para_paths(StoryRef::Body) {
+        if capped {
+            break;
+        }
         let Some(p) = s.doc.para(StoryRef::Body, &path) else { continue };
         let mut hits: Vec<(usize, usize)> = Vec::new();
         for needle in [long, short] {
@@ -132,7 +153,12 @@ pub(super) fn mark_all(s: &mut Session, long: &str, short: &str, selected: (&Pos
                 && b > selected.0.off
         };
         let marked = |end: usize| matches!(p.object_at(end), Some(InlineObject::Field { instr, .. }) if FieldCode::parse(instr).name == "TA");
-        let ends: Vec<usize> = kept.into_iter().filter(|(a, b)| !in_selection(*a, *b) && !marked(*b)).map(|(_, b)| b).collect();
+        let mut ends: Vec<usize> = kept.into_iter().filter(|(a, b)| !in_selection(*a, *b) && !marked(*b)).map(|(_, b)| b).collect();
+        let room = MARK_ALL_CAP.saturating_sub(added);
+        if ends.len() > room {
+            ends.truncate(room);
+            capped = true;
+        }
         if ends.is_empty() {
             continue;
         }
@@ -144,7 +170,7 @@ pub(super) fn mark_all(s: &mut Session, long: &str, short: &str, selected: (&Pos
         }
         para.touch();
     }
-    Ok(added)
+    Ok((added, capped))
 }
 
 /// Insert Table of Authorities: for each category (all those with citations by default, as Word
