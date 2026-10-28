@@ -1362,6 +1362,45 @@ fn copying_numbered_paragraphs_puts_an_html_list_on_the_clipboard() {
     assert!(from_sub_b.contains(&format!("<ol start=\"2\"><li><ol{sub} start=\"2\"><li>Sub B</li></ol></li><li>Three</li></ol>")), "{from_sub_b}");
 }
 
+/// A copy of numbered paragraphs whose list a plain paragraph interrupts: the items after it
+/// are an HTML list of their own, and it starts at the number they show (the list goes on past
+/// the plain paragraph), not at 1.
+#[test]
+fn copying_a_list_a_plain_paragraph_interrupts_keeps_the_later_items_numbers() {
+    let mut s = s();
+    run(&mut s, "document.setText", json!({"text": "One\nTwo\nNote\nThree\nFour"}));
+    run(&mut s, "select.all", json!({}));
+    run(&mut s, "para.numbering", json!({}));
+    s.sel = crate::Selection::caret(Pos::body(2, 0));
+    run(&mut s, "para.numbering", json!({"off": true}));
+    for from in [0, 1] {
+        s.sel = crate::Selection { anchor: Pos::body(from, 0), focus: Pos::body(4, 4) };
+        let html = run(&mut s, "edit.copy", json!({}))["html"].as_str().unwrap_or_default().replace('\n', "");
+        assert!(html.contains("<ol start=\"3\"><li>Three</li><li>Four</li></ol>"), "{html}");
+    }
+}
+
+/// Numbered paragraphs copied from a table cell keep the numbers the cell shows for them.
+#[test]
+fn copying_numbered_paragraphs_in_a_table_cell_keeps_their_numbers() {
+    let mut s = s();
+    run(&mut s, "insert.table", json!({"rows": 1, "cols": 1}));
+    let mut at = Vec::new();
+    for (k, t) in ["One", "Two", "Three", "Four"].into_iter().enumerate() {
+        if k > 0 {
+            run(&mut s, "text.newParagraph", json!({}));
+        }
+        at.push(s.sel.focus.clone());
+        run(&mut s, "text.insert", json!({"text": t}));
+    }
+    let end = s.sel.focus.clone();
+    s.sel = crate::Selection { anchor: at[0].clone(), focus: end.clone() };
+    run(&mut s, "para.numbering", json!({}));
+    s.sel = crate::Selection { anchor: at[2].clone(), focus: end };
+    let html = run(&mut s, "edit.copy", json!({}))["html"].as_str().unwrap_or_default().replace('\n', "");
+    assert!(html.contains("<ol start=\"3\"><li>Three</li><li>Four</li></ol>"), "{html}");
+}
+
 #[test]
 fn copying_symbol_font_text_puts_the_unicode_symbols_on_the_clipboard() {
     let mut s = s();

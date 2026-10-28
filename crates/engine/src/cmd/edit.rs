@@ -183,7 +183,10 @@ fn copy(s: &mut Session, _: &Value) -> CmdResult {
 /// and for a copy of one equation alone, its MathML (#1297).
 pub(crate) fn copy_result(s: &mut Session) -> Value {
     s.clipboard_html = match &s.clipboard {
-        Some(f) => wordcraft_formats::html::export_fragment(&clipboard_document(s, f)),
+        Some(f) => {
+            let (d, lists) = clipboard_document(s, f);
+            wordcraft_formats::html::export_fragment(&d, lists)
+        }
         None => String::new(),
     };
     let mut r = json!({"text": s.clipboard_text});
@@ -202,49 +205,24 @@ pub(crate) fn copy_result(s: &mut Session) -> Value {
 
 /// The copy as a document, for the HTML Copy puts on the system clipboard: the fragment with the
 /// source's styles and list definitions, so its numbered and bulleted paragraphs stay lists when
-/// another program pastes them (Word turns the HTML list back into numbering), and with each
-/// copied list starting at the number it has in the source, counted as the page shows it: a copy
-/// of items 3 and 4 reads 3 and 4, as Word's does. The first copied item of each list and level
-/// gets a list of its own that starts there, so a later list at that level, under the next item,
-/// still starts at its own start.
-fn clipboard_document(s: &Session, f: &Fragment) -> wordcraft_doc::Document {
+/// another program pastes them (Word turns the HTML list back into numbering); and the source's
+/// list counters where the copy starts, so each copied item keeps the number the page shows for
+/// it: a copy of items 3 and 4 reads 3 and 4, as Word's does. The copy's paragraphs are the
+/// source's from its first on, in order (whole tables, or the paragraphs of the cells it spans),
+/// so counting on through them gives each one its number there, in the body, a table cell or
+/// any other story.
+fn clipboard_document(s: &Session, f: &Fragment) -> (wordcraft_doc::Document, wordcraft_doc::numbering::Counters) {
     let mut d = f.to_document();
     d.styles = s.doc.styles.clone();
     d.numbering = s.doc.numbering.clone();
-    let (a, b) = s.sel.ordered();
-    // Copied body blocks map one to one onto the source's from the first: only a copy that starts
-    // in a top-level paragraph of the body.
-    let Some(first) = (a.story == StoryRef::Body && a.path.depth() == 0).then(|| a.path.last()) else { return d };
+    let (a, _) = s.sel.ordered();
     let mut counters = wordcraft_doc::numbering::Counters::default();
-    let mut seen = std::collections::HashSet::new();
-    for path in s.doc.para_paths(StoryRef::Body) {
-        if path > b.path {
-            break;
-        }
-        let Some(p) = s.doc.para(StoryRef::Body, &path) else { continue };
-        let Some(n) = s.doc.styles.resolve_para(&p.props).numbering.filter(|n| n.num != 0) else { continue };
-        if counters.next_label(&s.doc.numbering, n.num, n.level).is_none() || path < a.path || !seen.insert((n.num, n.level)) {
-            continue;
-        }
-        let Some(value) = counters.values(&s.doc.numbering, n.num).and_then(|v| v.get(n.level as usize).copied()) else { continue };
-        let Some(own) = d.numbering.restart(n.num) else { continue };
-        // Its level starts at its number, and the levels above it at their current numbers: they
-        // stand for the items above it the copy leaves out.
-        let current = counters.values(&s.doc.numbering, n.num).unwrap_or_default();
-        if let Some(num) = d.numbering.nums.iter_mut().find(|x| x.id == own) {
-            num.start_overrides.retain(|(l, _)| *l > n.level);
-            num.start_overrides.extend((0..n.level).filter_map(|k| current.get(k as usize).map(|v| (k, (*v).max(1)))));
-            num.start_overrides.push((n.level, value));
-        }
-        let mut at = path.clone();
-        if let Some(top) = at.0.first_mut() {
-            *top -= first as u32;
-        }
-        if let Ok(q) = d.para_mut(StoryRef::Body, &at) {
-            q.props.numbering = Some(wordcraft_doc::props::NumRef { num: own, level: n.level });
+    for path in s.doc.para_paths(a.story).into_iter().take_while(|p| *p != a.path) {
+        if let Some(p) = s.doc.para(a.story, &path) {
+            wordcraft_formats::model::count_list_para(&s.doc, p, &mut counters);
         }
     }
-    d
+    (d, counters)
 }
 
 fn cut(s: &mut Session, v: &Value) -> CmdResult {
