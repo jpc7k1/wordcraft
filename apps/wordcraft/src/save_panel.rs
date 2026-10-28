@@ -2,14 +2,19 @@
 //!
 //! rfd gives the Mac panel the save formats as allowed file types only, which shows no menu: saving
 //! as PDF or Rich Text meant knowing to type the extension. These calls are safe in the
-//! `objc2-app-kit` bindings (our workspace forbids unsafe). The menu can't rename the file while it
-//! changes, as Word's does (that needs a target-action or a notification observer, both unsafe);
-//! the format picked applies when Save is clicked ([`chosen_path`]).
+//! `objc2-app-kit` bindings (our workspace forbids unsafe). As in Word, picking a format renames the
+//! file ("Brief.docx" becomes "Brief.pdf"), so the panel's own replace check asks about the file
+//! that will be written. A menu action would need unsafe code (a target-action or a notification
+//! observer); [`follow_menu`] looks at the menu five times a second while the panel is up instead.
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use block2::RcBlock;
+use dispatch2::{DispatchQueue, DispatchTime, MainThreadBound};
+use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSModalResponse, NSModalResponseOK, NSPopUpButton, NSSavePanel, NSStackView, NSTextField, NSView};
 use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString, NSURL};
@@ -43,8 +48,13 @@ pub fn ask(name: &str, dir: Option<&str>, formats: Vec<(String, Vec<String>)>, a
     row.setEdgeInsets(NSEdgeInsets { top: 10.0, left: 20.0, bottom: 10.0, right: 20.0 });
     panel.setAccessoryView(Some(&row));
 
+    let open = Arc::new(AtomicBool::new(true));
+    let exts: Vec<Option<String>> = formats.iter().map(|(_, e)| e.first().cloned()).collect();
+    follow_menu(MainThreadBound::new(panel.clone(), mtm), MainThreadBound::new(menu.clone(), mtm), exts, 0, open.clone());
+
     let shown = panel.clone();
     let handler = RcBlock::new(move |response: NSModalResponse| {
+        open.store(false, Ordering::Relaxed);
         let picked = (response == NSModalResponseOK).then(|| shown.URL().and_then(|u| u.path())).flatten();
         let Some(path) = picked else {
             let _ = answer.send(Ok(Vec::new()));
@@ -74,6 +84,30 @@ pub fn ask(name: &str, dir: Option<&str>, formats: Vec<(String, Vec<String>)>, a
         Some(window) => panel.beginSheetModalForWindow_completionHandler(&window, &handler),
         None => panel.beginWithCompletionHandler(&handler),
     }
+}
+
+/// While the panel is `open`: when the File Format menu moves off item `shown`, give the name in the
+/// panel that format's extension (as [`chosen_path`] does), then look again in a fifth of a second.
+fn follow_menu(
+    panel: MainThreadBound<Retained<NSSavePanel>>,
+    menu: MainThreadBound<Retained<NSPopUpButton>>,
+    exts: Vec<Option<String>>,
+    shown: isize,
+    open: Arc<AtomicBool>,
+) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    if !open.load(Ordering::Relaxed) {
+        return;
+    }
+    let picked = menu.get(mtm).indexOfSelectedItem();
+    if picked != shown
+        && let Some(ext) = usize::try_from(picked).ok().and_then(|i| exts.get(i)).and_then(Option::as_deref)
+    {
+        let p = panel.get(mtm);
+        let name = p.nameFieldStringValue().to_string();
+        p.setNameFieldStringValue(&NSString::from_str(&chosen_path(&name, ext, true)));
+    }
+    let _ = DispatchQueue::main().after(DispatchTime::NOW.time(200_000_000), move || follow_menu(panel, menu, exts, picked, open));
 }
 
 /// A path's file name and folder.
