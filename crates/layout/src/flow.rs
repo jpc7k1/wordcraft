@@ -654,6 +654,8 @@ fn notes_split(pb: &PageBuilder, (new_notes, line_notes): (&[NoteBox], &[NoteBox
     };
     match line_notes.split_last() {
         Some((last, others)) => first_piece_fits(last, pb.notes.iter().chain(new_notes).chain(others).map(|n| n.h).sum()),
+        // `new_notes.last()` is the note being split: notes are appended in line order, and once
+        // one is split no later line bringing a note of its own fits here.
         None if splitting => {
             new_notes.split_last().is_some_and(|(last, others)| first_piece_fits(last, pb.notes.iter().chain(others).map(|n| n.h).sum()))
         }
