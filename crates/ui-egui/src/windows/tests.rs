@@ -303,6 +303,33 @@ fn mod_w_in_the_last_window_closes_it_on_macos() {
     }
 }
 
+/// Mod+W in the Start screen's empty window beside another window closes the empty window, as
+/// its close button does, and leaves the other window and its document as they are.
+#[test]
+fn mod_w_closes_the_empty_window_beside_another() {
+    let ctx = backend();
+    let mut a = WordApp::new(Session::new(wordcraft_doc::Document::new()), Services::default());
+    focus(ViewportId::ROOT);
+    frames(&ctx, &mut a, 2);
+    a.run("file.close", json!({})).unwrap();
+    assert!(!a.has_document());
+    let empty = a.windows.shown();
+    let placeholder = a.session.document_id();
+    let other = a.session.with_document(placeholder, |s| s.add_document(wordcraft_doc::Document::new())).unwrap();
+    a.session.with_document(other, |s| s.run("text.insert", &json!({"text": "Kept"}))).unwrap().unwrap();
+    frames(&ctx, &mut a, 2);
+    assert_eq!((a.window_count(), a.windows.shown(), a.active_viewport()), (2, empty, ViewportId::ROOT), "the empty window is in front");
+    let mac = cfg!(target_os = "macos");
+    let modifiers = egui::Modifiers { ctrl: !mac, mac_cmd: mac, command: true, ..Default::default() };
+    let key = egui::Event::Key { key: egui::Key::W, physical_key: None, pressed: true, repeat: false, modifiers };
+    EVENTS.with(|e| e.borrow_mut().entry(ViewportId::ROOT).or_default().push(key));
+    frames(&ctx, &mut a, 2);
+    assert_eq!(a.window_count(), 1, "the empty window closed");
+    assert_ne!(a.windows.shown(), empty);
+    assert_eq!((a.session.document_id(), prompt(&a), text(&a).as_str()), (other, None, "Kept"), "the other window's document is untouched");
+    assert!(!a.quit_requested);
+}
+
 /// Mod+W in a window with no changes closes it; the keys typed after it in the same frame
 /// don't reach the window that comes forward.
 #[test]
