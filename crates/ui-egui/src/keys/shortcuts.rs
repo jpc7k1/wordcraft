@@ -288,7 +288,9 @@ pub fn global_shortcuts(app: &mut WordApp, ctx: &egui::Context) {
         }
         if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
             if field {
-                if (modifiers.command || is_function_key(key)) && !text_field_keeps(key, modifiers) {
+                // Alt stays with the field: Option types characters on macOS, AltGr is Ctrl+Alt
+                // on Windows, and Mod+Alt+1 or Mod+Alt+- would change the document behind it.
+                if (modifiers.command || is_function_key(key)) && !modifiers.alt && !text_field_keeps(key, modifiers) {
                     dispatch(app, key, modifiers);
                 }
                 continue;

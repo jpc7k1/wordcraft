@@ -148,6 +148,27 @@ fn shortcuts_run_from_the_navigation_search_box() {
     assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("font"), "Mod+D opened Font from the search box");
 }
 
+/// Alt stays with the search box: Mod+Alt+N (Draft) and Mod+Alt+- (Em Dash) from the Navigation
+/// pane's search leave the view and the document alone, as AltGr and Option type characters.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn mod_alt_keys_stay_with_the_navigation_search_box() {
+    let mut app = crate::WordApp::new(wordcraft_engine::Session::new(wordcraft_doc::Document::from_text("kept")), crate::Services::default());
+    app.run("view.navigationPane", serde_json::json!({"value": true})).unwrap();
+    let mut h = pane_harness(app);
+    h.state_mut().nav_search_focus = true;
+    h.run_steps(2);
+    assert!(h.ctx.text_edit_focused() && !h.state().canvas.focused, "the search box has the keyboard");
+    let mode = h.state().session.view.mode;
+    let mod_alt = egui::Modifiers { alt: true, ..egui::Modifiers::COMMAND };
+    for key in [egui::Key::N, egui::Key::Minus] {
+        press(&mut h, key, mod_alt);
+        assert!(h.state().dialog.is_none() && h.ctx.text_edit_focused(), "Mod+Alt+{key:?} stays with the field");
+    }
+    assert_eq!(h.state().session.view.mode, mode, "Mod+Alt+N left the view alone");
+    assert_eq!(h.state().session.doc.plain_text(wordcraft_doc::StoryRef::Body).trim(), "kept", "Mod+Alt+- left the document alone");
+}
+
 /// A dialog button with the keyboard keeps Ctrl+Z away from the document behind the dialog.
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
