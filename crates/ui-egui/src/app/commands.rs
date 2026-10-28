@@ -551,10 +551,12 @@ impl WordApp {
                 json!({"pending": "contextMenu"})
             }
             "ui.paneDock" => return Some(panes::dock_command(self, p)),
-            // ⌘M on macOS: the window goes to the Dock.
+            // ⌘M on macOS: the window goes to the Dock. A key runs it while its window draws, in
+            // that window's viewport, which the window list may not have seen focused yet.
             "ui.minimize" => {
                 if let Some(ctx) = &self.ctx {
-                    ctx.send_viewport_cmd_to(self.active_viewport(), egui::ViewportCommand::Minimized(true));
+                    let viewport = if self.windows.drawing() { ctx.viewport_id() } else { self.active_viewport() };
+                    ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Minimized(true));
                 }
                 json!({"minimized": true})
             }

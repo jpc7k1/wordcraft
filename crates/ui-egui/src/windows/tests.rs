@@ -330,6 +330,67 @@ fn mod_w_closes_the_empty_window_beside_another() {
     assert!(!a.quit_requested);
 }
 
+#[cfg(target_os = "macos")]
+fn cmd_m() -> egui::Event {
+    let modifiers = egui::Modifiers { mac_cmd: true, command: true, ..Default::default() };
+    egui::Event::Key { key: egui::Key::M, physical_key: None, pressed: true, repeat: false, modifiers }
+}
+
+#[cfg(target_os = "macos")]
+fn minimized(id: ViewportId) -> usize {
+    COMMANDS.with(|c| c.borrow().get(&id).map_or(0, |v| v.iter().filter(|c| **c == ViewportCommand::Minimized(true)).count()))
+}
+
+/// ⌘M minimizes the window it was pressed in, also when the window list hasn't seen that window
+/// focused yet (the key comes in the frame that brought it forward).
+#[test]
+#[cfg(target_os = "macos")]
+fn cmd_m_minimizes_the_window_it_was_pressed_in() {
+    let ctx = backend();
+    let mut a = app("First");
+    frames(&ctx, &mut a, 2);
+    a.run("file.new", json!({})).unwrap();
+    frames(&ctx, &mut a, 3);
+    let child = a.active_viewport();
+    assert_ne!(child, ViewportId::ROOT, "the second window has a viewport of its own");
+    focus(ViewportId::ROOT);
+    frames(&ctx, &mut a, 2);
+    assert_eq!(a.active_viewport(), ViewportId::ROOT, "the first window is the active one");
+    COMMANDS.with(|c| c.borrow_mut().clear());
+    EVENTS.with(|e| e.borrow_mut().entry(child).or_default().push(cmd_m()));
+    frame(&ctx, &mut a);
+    assert_eq!((minimized(child), minimized(ViewportId::ROOT)), (1, 0), "the window that got ⌘M went to the Dock, not the active one");
+}
+
+/// ⌘M minimizes the window from a text field (the Navigation pane's search) and from a dialog's
+/// field, as Window › Minimize's key does in every Mac app, once each time.
+#[test]
+#[cfg(target_os = "macos")]
+fn cmd_m_minimizes_from_a_text_field_or_a_dialog() {
+    let ctx = backend();
+    let mut a = app("Only");
+    focus(ViewportId::ROOT);
+    frames(&ctx, &mut a, 2);
+    a.run("view.navigationPane", json!({"value": true})).unwrap();
+    frames(&ctx, &mut a, 2);
+    a.nav_search_focus = true;
+    frames(&ctx, &mut a, 2);
+    assert!(ctx.text_edit_focused() && !a.canvas.focused, "the search box has the keyboard");
+    COMMANDS.with(|c| c.borrow_mut().clear());
+    EVENTS.with(|e| e.borrow_mut().entry(ViewportId::ROOT).or_default().push(cmd_m()));
+    frame(&ctx, &mut a);
+    assert_eq!(minimized(ViewportId::ROOT), 1, "⌘M from the search box");
+
+    a.run("ui.dialog", json!({"name": "goto"})).unwrap();
+    frames(&ctx, &mut a, 2);
+    assert!(ctx.text_edit_focused() && prompt(&a) == Some("goto"), "Go To's page box has the keyboard");
+    COMMANDS.with(|c| c.borrow_mut().clear());
+    EVENTS.with(|e| e.borrow_mut().entry(ViewportId::ROOT).or_default().push(cmd_m()));
+    frame(&ctx, &mut a);
+    assert_eq!(minimized(ViewportId::ROOT), 1, "⌘M from the Go To dialog");
+    assert_eq!(prompt(&a), Some("goto"), "the dialog stays open");
+}
+
 /// Mod+W in a window with no changes closes it; the keys typed after it in the same frame
 /// don't reach the window that comes forward.
 #[test]

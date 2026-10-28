@@ -117,6 +117,29 @@ pub(super) fn ui_shortcut(key: Key, m: Modifiers) -> Option<(&'static str, Value
     }
 }
 
+/// ⌘M belongs to the window, as Window › Minimize's key does in every Mac app: it minimizes the
+/// window whatever has the keyboard there (a text field, a dialog), not only from the page, which
+/// runs it itself. Customize Keyboard still records it. The key leaves the frame's input, so the
+/// other shortcuts don't run it again.
+pub fn window_shortcuts(app: &mut WordApp, ctx: &egui::Context) {
+    if app.canvas.focused || matches!(app.dialog, Some(crate::dialogs::Dialog::CustomizeKeyboard { .. })) {
+        return;
+    }
+    let mut minimize = false;
+    ctx.input_mut(|i| {
+        i.events.retain(|e| match e {
+            egui::Event::Key { key, pressed, modifiers, .. } if ui_shortcut(*key, *modifiers).is_some_and(|(id, _)| id == "ui.minimize") => {
+                minimize |= *pressed;
+                false
+            }
+            _ => true,
+        });
+    });
+    if minimize {
+        let _ = app.run("ui.minimize", json!({}));
+    }
+}
+
 /// Find and run the command bound to this key. Returns true if handled.
 pub(super) fn dispatch(app: &mut WordApp, key: Key, m: Modifiers) -> bool {
     let reg = app.session.registry.clone();

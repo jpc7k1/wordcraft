@@ -132,6 +132,11 @@ impl Windows {
         self.driven
     }
 
+    /// The windows are being drawn, each in its own viewport's pass.
+    pub(crate) fn drawing(&self) -> bool {
+        self.showing
+    }
+
     /// The key of the window whose state is in [`WordApp`]'s fields.
     pub(crate) fn shown(&self) -> u64 {
         self.shown
