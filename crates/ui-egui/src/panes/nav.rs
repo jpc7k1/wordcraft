@@ -98,12 +98,15 @@ pub(super) fn nav(app: &mut WordApp, ui: &mut Ui) {
     });
 }
 
+/// Thumbnails kept for pages this many either side of those in the Pages tab's view.
+pub(super) const THUMBNAILS_KEPT: usize = 8;
+
 /// The Pages tab: a picture of each page, as Word's Pages and Thumbnails show; a click goes to
 /// the page, and the page with the caret is outlined. Only thumbnails scrolled into view are
 /// drawn, two a frame at most ([`crate::canvas::page_thumbnail`]).
 fn page_thumbnails(app: &mut WordApp, ui: &mut egui::Ui) {
     let layout = app.session.layout();
-    crate::canvas::keep_thumbnails(app, layout.pages.len());
+    let mut shown: Option<(usize, usize)> = None;
     let width = (ui.available_width() - 32.0).clamp(60.0, 220.0);
     let mut budget = 2;
     for (i, page) in layout.pages.iter().enumerate() {
@@ -113,6 +116,7 @@ fn page_thumbnails(app: &mut WordApp, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
             if ui.is_rect_visible(rect) {
+                shown = Some(shown.map_or((i, i), |(first, _)| (first, i)));
                 let painter = ui.painter();
                 match crate::canvas::page_thumbnail(app, ui.ctx(), &layout, i, width, &mut budget) {
                     Some(tex) => {
@@ -137,6 +141,10 @@ fn page_thumbnails(app: &mut WordApp, ui: &mut egui::Ui) {
         });
         ui.add_space(6.0);
     }
+    // Only the thumbnails near the pane's view stay: scrolling through a long document would
+    // otherwise keep a picture of every page it passed.
+    let keep = shown.map_or(0..0, |(first, last)| first.saturating_sub(THUMBNAILS_KEPT)..last.saturating_add(THUMBNAILS_KEPT + 1));
+    crate::canvas::keep_thumbnails(app, keep);
     // Thumbnails left out of date wait for the next frame.
     if budget == 0 {
         ui.ctx().request_repaint();

@@ -4798,3 +4798,26 @@ fn the_view_key_changes_when_a_drag_takes_an_object_off_the_page() {
     assert_ne!(hidden, view_key(&app, false, None), "the page without the dragged object is rendered again");
     assert_eq!(hidden, view_key(&app, false, Some(&object)), "the same drag keeps the key: no re-render every frame");
 }
+
+/// A thumbnail of a very tall Web or Draft page fits the renderer's largest side, scaled down as
+/// a whole rather than cut off; an ordinary page keeps its pane-width scale.
+#[test]
+fn a_tall_page_thumbnail_fits_the_largest_raster_side() {
+    let side = wordcraft_render::MAX_SIDE as f32;
+    // 220 px across an 800 pt page would be 16,500 px down a 60,000 pt one.
+    let scale = pages::thumbnail_scale(220.0, 800.0, 60_000.0);
+    assert!(scale < 220.0 / 800.0 && (60_000.0 * scale).ceil() <= side, "the whole page fits: {scale}");
+    let tallest = pages::thumbnail_scale(220.0, 800.0, 1e6);
+    assert!(tallest < 0.02 && (1e6 * tallest).ceil() <= side, "below 0.02 when it must be: {tallest}");
+    let doc = wordcraft_doc::Document::from_text("Tall");
+    let page = Page {
+        w: 800.0,
+        h: 60_000.0,
+        ..shown_layout(&mut WordApp::new(wordcraft_engine::Session::new(doc.clone()), crate::Services::default())).pages[0].clone()
+    };
+    let img = wordcraft_render::render_page(&doc, &page, scale, &wordcraft_render::RenderOptions::default());
+    assert!(img.height <= wordcraft_render::MAX_SIDE && (img.height as f32 - 60_000.0 * scale).abs() <= 1.0, "nothing cut off: {} px", img.height);
+    assert!((pages::thumbnail_scale(220.0, 612.0, 792.0) - 220.0 / 612.0).abs() < 1e-6, "a Letter page");
+    assert_eq!(pages::thumbnail_scale(2000.0, 612.0, 792.0), 1.0, "at most a pixel a point");
+    assert!(pages::thumbnail_scale(f32::NAN, 612.0, 792.0) > 0.0);
+}

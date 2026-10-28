@@ -102,7 +102,7 @@ pub(crate) fn page_thumbnail(
     budget: &mut usize,
 ) -> Option<TextureHandle> {
     let page = layout.pages.get(i)?;
-    let scale_px = (width * ctx.pixels_per_point() / page.w.max(1.0)).clamp(0.02, 1.0);
+    let scale_px = thumbnail_scale(width * ctx.pixels_per_point(), page.w, page.h);
     let view = view_key(app, false, None);
     let key = page_key(app, layout, i, view, scale_px);
     let fresh = app.canvas.thumbnails.get(&i).is_some_and(|(k, _)| *k == key);
@@ -124,9 +124,22 @@ pub(crate) fn page_thumbnail(
     app.canvas.thumbnails.get(&i).map(|(_, tex)| tex.clone())
 }
 
-/// Drop the thumbnails of pages past the last of `pages`.
-pub(crate) fn keep_thumbnails(app: &mut WordApp, pages: usize) {
-    app.canvas.thumbnails.retain(|i, _| *i < pages);
+/// The raster scale of a thumbnail `width_px` pixels wide of a `page_w` × `page_h` point page,
+/// at most one pixel a point. A very tall Web or Draft page is drawn smaller still, so the whole
+/// page fits within [`wordcraft_render::MAX_SIDE`] (the renderer would cut it off there).
+pub(super) fn thumbnail_scale(width_px: f32, page_w: f32, page_h: f32) -> f32 {
+    // A pixel short of the largest side: the renderer rounds the raster's sides up.
+    let side = wordcraft_render::MAX_SIDE as f32 - 1.0;
+    let (w, h) = (page_w.max(1.0), page_h.clamp(1.0, 1e6));
+    let scale = (width_px / w).clamp(0.02, 1.0);
+    if scale.is_finite() { scale.min(side / w).min(side / h) } else { 0.02 }
+}
+
+/// The Pages tab drew this frame: keep the thumbnails of the pages in `keep` (those near the
+/// pane's view) and drop the rest. Once a frame passes without it, the canvas drops them all.
+pub(crate) fn keep_thumbnails(app: &mut WordApp, keep: std::ops::Range<usize>) {
+    app.canvas.thumbnails_shown = true;
+    app.canvas.thumbnails.retain(|i, _| keep.contains(i));
 }
 
 pub(super) fn to_screen(origin: Pos2, page_rect: Rect, scale: f32, x: f32, y: f32) -> Pos2 {

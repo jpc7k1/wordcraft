@@ -92,6 +92,9 @@ pub struct CanvasState {
     textures: HashMap<usize, (u64, TextureHandle)>,
     /// The Navigation pane's page thumbnails, by page ([`page_thumbnail`]).
     thumbnails: HashMap<usize, (u64, TextureHandle)>,
+    /// Whether the Pages tab drew its thumbnails this frame; when it didn't (the tab or the pane
+    /// closed), the canvas drops them.
+    thumbnails_shown: bool,
     /// Visible full-resolution tiles of pages too tall for one GPU texture.
     tiles: HashMap<(usize, usize), (u64, TextureHandle)>,
     /// Page content fingerprints of the current layout, for the texture cache (#811).
@@ -350,6 +353,7 @@ impl Default for CanvasState {
         CanvasState {
             textures: HashMap::new(),
             thumbnails: HashMap::new(),
+            thumbnails_shown: false,
             tiles: HashMap::new(),
             page_keys: PageKeys::default(),
             markup_facts: std::cell::Cell::new(None),
@@ -1321,6 +1325,10 @@ fn finish_canvas_frame(finish: CanvasFinish<'_>, out: egui::scroll_area::ScrollA
 /// rulers and overlays, anchors zoom and scrolling, and routes pointer, selection, IME and caret
 /// input.
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
+    // The panes drew before the canvas: no Pages tab this frame, no thumbnails kept.
+    if !std::mem::take(&mut app.canvas.thumbnails_shown) {
+        app.canvas.thumbnails.clear();
+    }
     let t = Tokens::get(ui.ctx());
     let full = ui.available_rect_before_wrap();
     let layout = prepare_layout(app, ui, full);
